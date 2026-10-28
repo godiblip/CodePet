@@ -1,5 +1,17 @@
 # Release notes / 릴리즈 노트
 
+## 1.2.1 — 2026-10-28
+
+### English
+
+- Harden the local Codex account-switching proxy against browser-originated and DNS-rebinding requests by validating Host, Origin and Sec-Fetch-Site before forwarding HTTP or WebSocket traffic.
+- Preserve native Codex requests, safely close rejected WebSocket connections, and limit repeated rejection logs.
+
+### 한국어
+
+- Codex 계정 전환용 로컬 프록시가 HTTP·WebSocket 요청을 중계하기 전에 Host·Origin·Sec-Fetch-Site를 검사해 웹페이지와 DNS 리바인딩 요청을 제한하도록 했습니다.
+- 네이티브 Codex 요청을 유지하고, 거부된 WebSocket 연결을 안전하게 닫으며 반복 거부 로그를 제한합니다.
+
 ## 1.1.9 — 2026-10-27
 
 ### English

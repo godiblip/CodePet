@@ -1,6 +1,6 @@
 {
   "name": "code-pet",
-  "version": "1.1.9",
+  "version": "1.2.1",
   "private": false,
   "description": "Multi-provider desktop companion for Codex, Antigravity, Claude, and Grok.",
   "desktopName": "CodePet.desktop",
