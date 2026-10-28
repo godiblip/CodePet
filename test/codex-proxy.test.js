@@ -41,6 +41,30 @@ function startUpstream(handler) {
   });
 }
 
+// 원시 요청을 보내고 상태 줄만 돌려줍니다. 브라우저가 붙이는 헤더를 그대로 흉내 내기 위해 씁니다.
+function rawRequest(port, lines) {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(port, "127.0.0.1", () => socket.write([...lines, "", ""].join("\r\n")));
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error("raw request timeout"));
+    }, 4000);
+    let data = "";
+    socket.on("data", (chunk) => {
+      data += chunk;
+      if (data.includes("\r\n")) {
+        clearTimeout(timer);
+        socket.destroy();
+        resolve(data.split("\r\n")[0]);
+      }
+    });
+    socket.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
+}
+
 test("config 주입은 루트 영역의 첫 테이블 앞에 marker와 base_url을 넣는다", () => {
   const content = ['model = "gpt-5"', "", "[plugins.chrome]", 'x = "y"'].join("\n");
   const result = injectBaseUrl(content, 10161);
@@ -408,7 +432,7 @@ test("계정 전환은 기존 WebSocket만 끊고 재연결 handshake에 새 계
   const connectTunnel = () => new Promise((resolve, reject) => {
     const socket = net.connect(proxyPort, "127.0.0.1", () => {
       socket.write(
-        "GET /v1/responses HTTP/1.1\r\nHost: codepet\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n"
+        `GET /v1/responses HTTP/1.1\r\nHost: 127.0.0.1:${proxyPort}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n`
       );
     });
     const timeout = setTimeout(() => {
@@ -531,7 +555,7 @@ test("WebSocket 핸드셰이크 중 upstream이 닫으면 hang하지 않고 다�
     const status = await new Promise((resolve, reject) => {
       const socket = net.connect(proxyPort, "127.0.0.1", () => {
         socket.write(
-          "GET /v1/responses HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n"
+          `GET /v1/responses HTTP/1.1\r\nHost: 127.0.0.1:${proxyPort}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n`
         );
       });
       let data = "";
@@ -549,5 +573,142 @@ test("WebSocket 핸드셰이크 중 upstream이 닫으면 hang하지 않고 다�
   } finally {
     proxy.stop();
     upstream.close();
+  }
+});
+
+// 브라우저(웹페이지) 요청 거부: 프록시가 저장 계정 토큰을 붙여 중계하므로 Codex 외의 호출자는 막습니다.
+async function startGuardedProxy(port) {
+  const hits = [];
+  const upstream = await startUpstream((request, response) => {
+    hits.push(request.headers.authorization);
+    response.writeHead(200);
+    response.end("{}");
+  });
+  upstream.on("upgrade", (request, socket) => {
+    hits.push(request.headers.authorization);
+    socket.end("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n");
+  });
+  const proxy = poolProxy({
+    upstreamPort: upstream.address().port,
+    accounts: [{ key: "a", label: "A", authPath: "token-a" }],
+    port,
+  });
+  const proxyPort = await proxy.start();
+  return { hits, upstream, proxy, proxyPort, close: () => { proxy.stop(); upstream.close(); } };
+}
+
+const UPGRADE = ["Connection: Upgrade", "Upgrade: websocket", "Sec-WebSocket-Key: dGVzdA==", "Sec-WebSocket-Version: 13"];
+
+test("루프백이 아닌 Host로 들어온 요청은 토큰을 붙이지 않고 거부한다", async () => {
+  const f = await startGuardedProxy(19241);
+  try {
+    const hosts = [
+      `attacker.example:${f.proxyPort}`, `127.0.0.1.attacker.example:${f.proxyPort}`, `[::1]:${f.proxyPort}`,
+      `localhost.:${f.proxyPort}`, "127.0.0.1", "localhost", `127.0.0.1:${f.proxyPort + 1}`,
+      `127.0.0.2:${f.proxyPort}`, `127.1:${f.proxyPort}`,
+    ];
+    for (const host of hosts) {
+      assert.match(await rawRequest(f.proxyPort, ["POST /v1/responses HTTP/1.1", `Host: ${host}`, "Content-Length: 0"]), / 403 /, host);
+      assert.match(await rawRequest(f.proxyPort, ["GET /v1/responses HTTP/1.1", `Host: ${host}`, ...UPGRADE]), / 403 /, host);
+    }
+    // HTTP/1.0은 Host 없이 보낼 수 있습니다.
+    assert.match(await rawRequest(f.proxyPort, ["GET /v1/models HTTP/1.0"]), / 403 /);
+    assert.deepEqual(f.hits, []);
+
+    // Codex처럼 루프백 Host로 오는 요청은 그대로 토큰을 붙여 중계합니다.
+    for (const host of [`127.0.0.1:${f.proxyPort}`, `localhost:${f.proxyPort}`, `LOCALHOST:${f.proxyPort}`]) {
+      assert.match(await rawRequest(f.proxyPort, ["POST /v1/responses HTTP/1.1", `Host: ${host}`, "Content-Length: 0"]), / 200 /, host);
+    }
+    assert.deepEqual(f.hits, ["Bearer token-a", "Bearer token-a", "Bearer token-a"]);
+  } finally {
+    f.close();
+  }
+});
+
+test("Origin 헤더가 붙은 요청은 값과 관계없이 HTTP와 WebSocket 모두 거부한다", async () => {
+  const f = await startGuardedProxy(19251);
+  const host = `Host: 127.0.0.1:${f.proxyPort}`;
+  try {
+    // WebSocket은 CORS로 막히지 않으므로 Origin으로 거부해야 합니다. file://·sandbox 페이지는 null을 보냅니다.
+    for (const origin of ["https://attacker.example", "http://127.0.0.1:8080", "null", "file://", "chrome-extension://abc", "app://codex", ""]) {
+      assert.match(await rawRequest(f.proxyPort, ["GET /v1/responses HTTP/1.1", host, `Origin: ${origin}`, ...UPGRADE]), / 403 /, origin);
+      assert.match(await rawRequest(f.proxyPort, ["POST /v1/responses HTTP/1.1", host, `Origin: ${origin}`, "Content-Length: 0"]), / 403 /, origin);
+    }
+    assert.deepEqual(f.hits, []);
+    // Origin 없는 Codex WebSocket은 그대로 중계합니다.
+    assert.match(await rawRequest(f.proxyPort, ["GET /v1/responses HTTP/1.1", host, ...UPGRADE]), / 101 /);
+    assert.deepEqual(f.hits, ["Bearer token-a"]);
+  } finally {
+    f.close();
+  }
+});
+
+test("Sec-Fetch-Site가 none이 아닌 요청은 Origin이 없어도 거부한다", async () => {
+  const f = await startGuardedProxy(19261);
+  const host = `Host: 127.0.0.1:${f.proxyPort}`;
+  try {
+    // <img>, no-cors fetch, 페이지 이동은 GET이라 Origin이 없고 Sec-Fetch-Site만 붙습니다.
+    for (const site of ["cross-site", "same-site", "same-origin", "CROSS-SITE"]) {
+      assert.match(await rawRequest(f.proxyPort, ["GET /v1/models HTTP/1.1", host, `Sec-Fetch-Site: ${site}`, "Sec-Fetch-Mode: no-cors"]), / 403 /, site);
+    }
+    assert.deepEqual(f.hits, []);
+    // 사용자가 주소창에 직접 연 요청(none)과 Sec-Fetch-Site가 없는 요청은 그대로 중계합니다.
+    // Node fetch(undici)는 Sec-Fetch-Mode만 보냅니다.
+    assert.match(await rawRequest(f.proxyPort, ["GET /v1/models HTTP/1.1", host, "Sec-Fetch-Site: none"]), / 200 /);
+    assert.match(await rawRequest(f.proxyPort, ["GET /v1/models HTTP/1.1", host, "Sec-Fetch-Mode: cors"]), / 200 /);
+    assert.deepEqual(f.hits, ["Bearer token-a", "Bearer token-a"]);
+  } finally {
+    f.close();
+  }
+});
+
+test("거부한 WebSocket 업그레이드에서 클라이언트가 먼저 끊어도 프록시가 죽지 않는다", async () => {
+  const f = await startGuardedProxy(19271);
+  try {
+    // upgrade 소켓에는 Node 기본 error 리스너가 없어, 403을 쓰기 전에 RST가 오면 uncaught ECONNRESET이 납니다.
+    await Promise.all(Array.from({ length: 40 }, () => new Promise((resolve) => {
+      const socket = net.connect(f.proxyPort, "127.0.0.1", () => {
+        socket.write(["GET /v1/responses HTTP/1.1", `Host: 127.0.0.1:${f.proxyPort}`, "Origin: https://attacker.example", ...UPGRADE, "", ""].join("\r\n"));
+        setImmediate(() => socket.resetAndDestroy());
+      });
+      socket.on("error", () => {});
+      socket.once("close", resolve);
+    })));
+    assert.match(await rawRequest(f.proxyPort, ["GET /v1/models HTTP/1.1", `Host: 127.0.0.1:${f.proxyPort}`]), / 200 /);
+  } finally {
+    f.close();
+  }
+});
+
+test("Host는 설정 포트가 아니라 연결이 들어온 실제 포트와 비교한다", async () => {
+  // port: 0으로 시작하면 운영체제가 고른 포트로 열립니다. 이때도 Codex 요청은 중계되어야 합니다.
+  const f = await startGuardedProxy(0);
+  const port = f.proxy.server.address().port;
+  try {
+    assert.match(await rawRequest(port, ["GET /v1/models HTTP/1.1", `Host: 127.0.0.1:${port}`]), / 200 /);
+    assert.match(await rawRequest(port, ["GET /v1/models HTTP/1.1", `Host: 127.0.0.1:${port + 1}`]), / 403 /);
+    assert.deepEqual(f.hits, ["Bearer token-a"]);
+  } finally {
+    f.close();
+  }
+});
+
+test("거부 기록은 10초에 한 번만 남겨 로그가 계속 커지지 않는다", async () => {
+  const lines = [];
+  const proxy = new CodexProxy({
+    upstreamBase: "http://127.0.0.1:9/backend-api/codex",
+    port: 19281,
+    resolveAccounts: async () => [],
+    readAuth: () => null,
+    log: (line) => lines.push(line),
+  });
+  const proxyPort = await proxy.start();
+  try {
+    for (let index = 0; index < 5; index += 1) {
+      assert.match(await rawRequest(proxyPort, ["GET /v1/models HTTP/1.1", `Host: attacker.example:${proxyPort}`]), / 403 /);
+    }
+    assert.equal(lines.filter((line) => line.startsWith("proxy rejected")).length, 1);
+  } finally {
+    proxy.stop();
   }
 });

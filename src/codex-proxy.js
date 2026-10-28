@@ -198,10 +198,45 @@ class CodexProxy {
     return Boolean(this.server && this.server.listening);
   }
 
+  // 프록시는 저장 계정의 토큰을 붙여 중계하므로 브라우저(웹페이지)가 보낸 요청은 거부합니다.
+  // - Host는 이 연결이 들어온 루프백 주소와 포트여야 합니다(DNS 리바인딩 차단).
+  // - Origin 헤더가 있으면 거부합니다. WebSocket은 CORS로 막히지 않고 Sec-Fetch 헤더도 붙지
+  //   않으므로 Origin으로 막아야 합니다. Codex app-server의 로컬 WebSocket도 같은 기준을 씁니다.
+  // - Origin이 없는 교차 사이트 요청(img, no-cors fetch, 페이지 이동)은 Sec-Fetch-Site로 거부합니다.
+  //   사용자가 주소창에 직접 연 요청(none)만 허용합니다.
+  // Codex의 Rust 클라이언트는 Origin·Sec-Fetch-Site를 보내지 않고 Host를 127.0.0.1:<port>로 보냅니다.
+  isTrustedClient(request) {
+    const port = request.socket && request.socket.localPort;
+    const host = String(request.headers.host || "").trim().toLowerCase();
+    if (!port || (host !== `127.0.0.1:${port}` && host !== `localhost:${port}`)) return false;
+    if (request.headers.origin !== undefined) return false;
+    const site = request.headers["sec-fetch-site"];
+    return site === undefined || String(site).trim().toLowerCase() === "none";
+  }
+
+  // 웹페이지가 요청을 반복해도 로그가 계속 커지지 않도록 거부 기록은 10초에 한 번만 남깁니다.
+  logRejected(kind, request) {
+    const now = Date.now();
+    if (now - (this.rejectLoggedAt || 0) < 10000) {
+      this.rejectsSuppressed = (this.rejectsSuppressed || 0) + 1;
+      return;
+    }
+    const suppressed = this.rejectsSuppressed ? ` (+${this.rejectsSuppressed} more since last log)` : "";
+    this.rejectLoggedAt = now;
+    this.rejectsSuppressed = 0;
+    this.log(`proxy rejected ${kind} from host=${request.headers.host || "-"} origin=${request.headers.origin || "-"} sec-fetch-site=${request.headers["sec-fetch-site"] || "-"}${suppressed}`);
+  }
+
   async start() {
     if (this.running) return this.port;
 
     const server = http.createServer((request, response) => {
+      if (!this.isTrustedClient(request)) {
+        this.logRejected("request", request);
+        response.writeHead(403, { "content-type": "application/json" });
+        response.end('{"error":{"message":"codepet proxy: forbidden client"}}');
+        return;
+      }
       this.handleRequest(request, response).catch((error) => {
         this.log(`proxy request failed: ${error.message || error}`);
         if (!response.headersSent) {
@@ -212,6 +247,13 @@ class CodexProxy {
     });
     // Codex 데스크톱 앱은 responses를 WebSocket으로 보냅니다. 업그레이드 요청은 원시 터널로 중계합니다.
     server.on("upgrade", (request, socket, head) => {
+      if (!this.isTrustedClient(request)) {
+        // upgrade 소켓에는 Node 기본 error 리스너가 없어, 상대가 먼저 끊으면 uncaught ECONNRESET이 납니다.
+        socket.on("error", () => {});
+        this.logRejected("websocket", request);
+        socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+        return;
+      }
       this.handleUpgrade(request, socket, head).catch((error) => {
         this.log(`proxy websocket failed: ${error.message || error}`);
         socket.destroy();
