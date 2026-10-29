@@ -95,4 +95,32 @@ function readMessageRange(file, { afterId, throughId, agentId }) {
   } finally { fs.closeSync(fd); }
 }
 
-module.exports = { readMessagePage, readMessageRange, HISTORY_PAGE_SIZE };
+// Inspect only the final record, never the entire transcript on append.
+function repairAppendBoundary(file) {
+  let fd;
+  try { fd = fs.openSync(file, "r+"); }
+  catch (error) { if (error.code === "ENOENT") return; throw error; }
+  try {
+    const size = fs.fstatSync(fd).size;
+    if (!size) return;
+    const last = Buffer.alloc(1);
+    fs.readSync(fd, last, 0, 1, size - 1);
+    if (last[0] === 10) return;
+    const tail = reverseLines(fd, size).next().value;
+    let valid = false;
+    try {
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(tail.raw);
+      JSON.parse(text);
+      valid = true;
+    } catch {}
+    if (valid) fs.writeSync(fd, Buffer.from("\n"), 0, 1, size);
+    else {
+      // Keep exact bytes for diagnosis before changing the original file.
+      fs.writeFileSync(`${file}.damaged-${require("node:crypto").randomUUID()}`, tail.raw, { flag: "wx", mode: 0o600 });
+      fs.ftruncateSync(fd, tail.before);
+    }
+    fs.fsyncSync(fd);
+  } finally { fs.closeSync(fd); }
+}
+
+module.exports = { readMessagePage, readMessageRange, repairAppendBoundary, HISTORY_PAGE_SIZE };

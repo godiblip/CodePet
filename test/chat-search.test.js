@@ -119,7 +119,7 @@ test("세션 검색 IPC는 질의를 검증하고 저장소 결과만 반환한�
 
   const handlers = new Map();
   const feature = createChatFeature({
-    storeRoot,
+    store, storeRoot,
     electron: {
       ipcMain: {
         handle(channel, handler) {
