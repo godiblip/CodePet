@@ -3671,7 +3671,10 @@ if (!relaunchingForX11) app.whenReady().then(() => {
   grokWatcher.start();
   codexProxyStartupPromise = restoreCodexProxyMode();
   void codexProxyStartupPromise;
-
+  if (process.env.CODEPET_PACKAGE_SMOKE_OUTPUT) {
+    require("./package-smoke").runPackageSmoke({app, BrowserWindow, ipcMain}, process.env.CODEPET_PACKAGE_SMOKE_OUTPUT)
+      .catch(error => { console.error(error); app.exit(1); });
+  }
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
