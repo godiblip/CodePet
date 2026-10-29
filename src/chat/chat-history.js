@@ -123,4 +123,16 @@ function repairAppendBoundary(file) {
   } finally { fs.closeSync(fd); }
 }
 
-module.exports = { readMessagePage, readMessageRange, repairAppendBoundary, HISTORY_PAGE_SIZE };
+function* reverseMessages(file) {
+  let fd;
+  try { fd = fs.openSync(file, "r"); }
+  catch(error) { if (error.code === "ENOENT") return; throw error; }
+  try {
+    for (const line of reverseLines(fd, fs.fstatSync(fd).size)) {
+      let event;
+      try { event = JSON.parse(line.raw.toString("utf8")); } catch { continue; }
+      if (event?.kind === "message" && event.message) yield event.message;
+    }
+  } finally { fs.closeSync(fd); }
+}
+module.exports = { readMessagePage, readMessageRange, repairAppendBoundary, reverseMessages, HISTORY_PAGE_SIZE };

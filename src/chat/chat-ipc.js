@@ -747,7 +747,7 @@ function createChatFeature(options) {
       wrap(async ({ query }) => {
         if (!ensureStore()) return { results: [] };
         const cleanQuery = typeof query === "string" ? query.trim() : "";
-        return { results: cleanQuery ? store.searchSessions(cleanQuery) : [] };
+        return { results: cleanQuery ? await store.searchSessionsAsync(cleanQuery) : [] };
       })
     );
 

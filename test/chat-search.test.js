@@ -7,6 +7,17 @@ const path = require("node:path");
 const { ChatStore } = require("../src/chat/chat-store");
 const { createChatFeature } = require("../src/chat/chat-ipc");
 
+test("worker search matches synchronous results while keeping the main loop responsive", async t => {
+  const store = makeStore(t);
+  const session = store.createSession();
+  const line = JSON.stringify({kind:"message",message:{id:"x",authorType:"user",text:"needle"}})+"\n";
+  fs.writeFileSync(store.transcriptPath(session.id),line.repeat(10000));
+  let ticked=false;setImmediate(()=>{ticked=true;});
+  assert.deepEqual(await store.searchSessionsAsync("needle"), store.searchSessions("needle"));
+  assert.equal(ticked,true);
+  store.close();
+});
+
 function makeStore(t, options = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codepet-search-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

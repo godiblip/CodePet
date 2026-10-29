@@ -261,9 +261,7 @@ class ChatStore {
 
     for (const session of this.listSessions()) {
       let sessionMatches = 0;
-      const messages = this.readMessages(session.id);
-      for (let index = messages.length - 1; index >= 0; index -= 1) {
-        const message = messages[index];
+      for (const message of require("./chat-history").reverseMessages(this.transcriptPath(session.id))) {
         if (!message || message.authorType === "system") continue;
         const text = normalizeSearchText(message.text);
         if (!text) continue;
@@ -283,6 +281,19 @@ class ChatStore {
       }
     }
     return results;
+  }
+
+  searchSessionsAsync(query) {
+    if (typeof query !== "string" || !query.trim()) return Promise.resolve([]);
+    const { Worker } = require("node:worker_threads");
+    return new Promise((resolve, reject) => {
+      const worker = new Worker(path.join(__dirname, "chat-search-worker.js"), {
+        workerData: { root: this.root, sessions: this.listSessions(), query },
+      });
+      worker.once("message", resolve);
+      worker.once("error", reject);
+      worker.once("exit", code => { if (code !== 0) reject(new Error(`Search worker exited ${code}`)); });
+    });
   }
 
   hasSession(id) {
