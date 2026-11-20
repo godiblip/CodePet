@@ -1,0 +1,6 @@
+{
+  "identifier": "local-windows",
+  "description": "Read events sent to local CodePet renderer windows",
+  "windows": ["codepet-*"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}

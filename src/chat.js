@@ -1871,10 +1871,18 @@ composerBox.addEventListener("drop", async (event) => {
   const paths = [...(event.dataTransfer?.files || [])]
     .map((file) => window.chatApi.pathForFile(file))
     .filter(Boolean);
+  await addDroppedAttachments(paths);
+});
+window.addEventListener("codepet-file-drop", async ({ detail }) => {
+  if (!detail || !composerBox.contains(document.elementFromPoint(detail.x, detail.y))) return;
+  if (Array.isArray(detail.paths)) await addDroppedAttachments(detail.paths);
+});
+
+async function addDroppedAttachments(paths) {
   if (paths.length === 0) return;
   const result = await call(window.chatApi.attachmentsAddDropped(activeSessionId, paths));
   applyPendingAttachmentResult(result);
-});
+}
 
 composerInput.addEventListener("paste", async (event) => {
   const files = chatClipboard.clipboardImageFiles(event.clipboardData);

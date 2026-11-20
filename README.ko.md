@@ -138,3 +138,14 @@ npm test
 `npm run dist`로 현재 운영체제용 패키지를 만들면 `artifacts/`에 배포 파일만 추가되고 임시 빌드 파일은 정리됩니다. 빌드 전에는 CodePet을 종료하세요. 릴리스 워크플로는 Windows·Linux·macOS 패키지와 체크섬을 생성합니다.
 
 Linux에서 FUSE 마운트를 사용할 수 없으면 AppImage에 `--appimage-extract-and-run` 옵션을 붙여 실행하세요. 배포 AppImage에는 AppImageUpdate용 `.zsync` 파일이 함께 제공됩니다. Wayland에서 펫 자동 이동을 사용하려면 XWayland가 필요하며, 사용자가 지정한 Electron 플랫폼 설정을 우선합니다.
+
+### Tauri 개발 빌드
+
+이 브랜치에는 기존 CodePet 화면과 대화 저장소를 재사용하는 Tauri 실행 경로가 있습니다. Windows에서는 WebView2, 개발 도구는 Rust MSVC와 Node.js가 필요합니다. 기존 CodePet을 종료한 뒤 저장소에서 실행하세요. 두 런타임이 설정과 계정 관련 파일을 공유합니다.
+
+```powershell
+npm install
+npm run tauri dev
+```
+
+창을 열지 않고 컴파일하려면 `npm run tauri build -- --debug --no-bundle`을 실행하세요. 생성되는 `src-tauri/target/debug/codepet-tauri.exe`는 이 체크아웃의 소스와 시스템 Node.js를 사용합니다. 개발 빌드는 자동 업데이트와 로그인 시 자동 실행을 제공하지 않습니다.
