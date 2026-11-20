@@ -1,5 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, screen, shell, dialog, powerMonitor } =
-  process.env.CODEPET_TAURI_BACKEND === "1" ? require("./tauri/desktop") : require("electron");
+const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, screen, shell, dialog, powerMonitor } = require("electron");
 const { spawn, spawnSync, execFile } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -11,7 +10,7 @@ const { prepareX11Relaunch } = require("./linux-window-backend");
 // Linux Wayland 세션에서는 사용자가 백엔드를 명시하지 않은 경우만 X11로
 // 한 번 재실행합니다. Ozone 백엔드는 main.js가 실행되기 전에 고르므로
 // app.commandLine.appendSwitch로는 너무 늦습니다.
-const relaunchingForX11 = !app.tauri && prepareX11Relaunch(app);
+const relaunchingForX11 = prepareX11Relaunch(app);
 const instanceReady = relaunchingForX11 ? null : require("./app-instance").claimInstance(
   app, require("./chat/chat-store").defaultRoot(), (argv) => {
     if (argv.includes("--chat")) openChatWindow();
@@ -3482,16 +3481,11 @@ function registerIpcHandlers() {
     console.warn("[desktop-pet] Unknown bubble action ignored.", actionId);
   });
 
-  if (app.tauri) {
-    ipcMain.handle("settings:check-update", () => ({ status: "unsupported", currentVersion: app.getVersion() }));
-    ipcMain.handle("settings:download-update", () => ({ ok: false, error: "Tauri 미리보기에서는 자동 업데이트를 사용할 수 없습니다." }));
-  } else {
-    const updater = new AppUpdateInstaller({ app });
-    updater.on("progress", (state) => {
-      if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.webContents.send("settings:update-progress", state);
-    });
-    registerUpdateIpc({ ipcMain, shell, checker: new AppUpdateChecker({ currentVersion: app.getVersion() }), updater });
-  }
+  const updater = new AppUpdateInstaller({ app });
+  updater.on("progress", (state) => {
+    if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.webContents.send("settings:update-progress", state);
+  });
+  registerUpdateIpc({ ipcMain, shell, checker: new AppUpdateChecker({ currentVersion: app.getVersion() }), updater });
   ipcMain.handle("settings:get", async () => ({
     ok: true,
     data: await getSettingsData(),
@@ -3540,7 +3534,7 @@ function registerIpcHandlers() {
     if (Object.values(ACTIVITY_BUBBLE_MODES).includes(next.activityBubbleMode)) {
       setActivityBubbleMode(next.activityBubbleMode);
     }
-    if (typeof next.autoStart === "boolean" && !app.tauri && next.autoStart !== isAutoLaunchEnabled()) {
+    if (typeof next.autoStart === "boolean" && next.autoStart !== isAutoLaunchEnabled()) {
       toggleAutoLaunch();
     }
 
@@ -3929,7 +3923,6 @@ async function getSettingsData({ forceUsage = false } = {}) {
     petKey: resolveSelectedPet()?.key || "",
     activityBubbleMode: settings.activityBubbleMode || "full",
     autoStart: isAutoLaunchEnabled(),
-    autoStartAvailable: !app.tauri,
     providers: [
       { id: "codex", label: "Codex", accounts: codexAccounts },
       { id: "agy", label: "AGY", accounts: agy.accounts },

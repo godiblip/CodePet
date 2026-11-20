@@ -28,8 +28,7 @@
     "start": "electron .",
     "dev": "electron .",
     "test": "node --test",
-    "dist": "node scripts/build.js",
-    "tauri": "tauri"
+    "dist": "node scripts/build.js"
   },
   "build": {
     "appId": "app.codepet.desktop",
@@ -100,7 +99,6 @@
     "electron": "44.9.3"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.12.6",
     "electron-builder": "^26.15.3"
   }
 }

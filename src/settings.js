@@ -230,7 +230,6 @@ function renderGeneral({ resetAppearance = false } = {}) {
   );
   $("#bubble-mode").value = state.activityBubbleMode;
   $("#autostart").checked = state.autoStart;
-  $("#autostart").disabled = state.autoStartAvailable === false;
   $("#work-mode").checked = Boolean(state.appearance.workMode);
 
   const bgVal = state.appearance.bubbleBgColor || "";
@@ -713,7 +712,6 @@ function registerUpdateControls() {
   const version = $("#app-version");
   let checking = false;
   let busy = false;
-  let supported = true;
   let currentVersion = version.textContent;
   let actionLabel = "새 버전 다운로드";
   function renderProgress(update) {
@@ -738,7 +736,6 @@ function registerUpdateControls() {
     try {
       const result = await api.checkUpdate(force);
       if (result?.currentVersion) currentVersion = `VERSION ${result.currentVersion}`;
-      supported = result?.status !== "unsupported";
       if (busy) return;
       button.hidden = result?.status !== "available";
       if (!button.hidden) {
@@ -747,7 +744,6 @@ function registerUpdateControls() {
       renderProgress(result?.update);
       feedback.textContent = result?.status === "available" ? `새 버전 ${result.latestVersion}을 사용할 수 있습니다.`
         : result?.status === "up-to-date" ? "최신 버전입니다."
-          : !supported ? "Tauri 미리보기에서는 자동 업데이트를 사용할 수 없습니다."
           : "업데이트를 확인하지 못했습니다. 연결을 확인한 뒤 다시 시도해 주세요.";
       if (result?.retryAfterMs) feedback.textContent += ` ${Math.ceil(result.retryAfterMs / 1000)}초 후 다시 확인할 수 있습니다.`;
     } catch {
@@ -755,7 +751,7 @@ function registerUpdateControls() {
       feedback.textContent = "업데이트를 확인하지 못했습니다. 다시 시도해 주세요.";
     } finally {
       checking = false;
-      checkButton.disabled = busy || !supported;
+      checkButton.disabled = busy;
       checkButton.setAttribute("aria-busy", "false");
     }
   }

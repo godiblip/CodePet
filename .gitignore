@@ -4,8 +4,6 @@
 # Build and package outputs
 /artifacts/
 /dist/
-/src-tauri/target/
-/src-tauri/gen/
 /release/
 /*.AppImage
 /*.dmg
